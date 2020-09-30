@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "bsdiff/bspatch.h"
 #include "handler.h"
@@ -54,7 +55,7 @@ int bspatch_read_cb(const struct bspatch_stream *stream,
 	return 0;
 }
 
-static int bsdiff_handler(struct img_type *img,
+int bsdiff_handler(struct img_type *img,
 		void __attribute__ ((__unused__)) *data)
 {
 	int ret = 0;
@@ -66,7 +67,7 @@ static int bsdiff_handler(struct img_type *img,
 	uint8_t *src_data = NULL;
 	uint8_t *dst_data = NULL;
 	patch_data_t pd = {};
-    struct bspatch_stream bspatch_data = {};
+	struct bspatch_stream bspatch_data = {};
 
 	if (img->seek) {
 		ERROR("Option 'seek' is not supported for bsdiff.");
@@ -83,7 +84,7 @@ static int bsdiff_handler(struct img_type *img,
 	if (chunk_size_str == NULL) {
 		//
 	}
-	chunk_size = strtoul(chunk_size_str);
+	chunk_size = strtoul(chunk_size_str, NULL, 10);
 
 	dst_file = NULL;
 	if ((dst_file = fopen(img->device, "wb+")) == NULL) {
@@ -122,7 +123,7 @@ static int bsdiff_handler(struct img_type *img,
 	bspatch_data.opaque = &pd;
 	bspatch_data.read = bspatch_read_cb;
 
-	uint8_t *src_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
+	src_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
 	// FIXME - seek to offset point in input
 	size_t bytes_read = fread(src_data, 1, chunk_size, src_file);
 
