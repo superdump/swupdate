@@ -102,7 +102,7 @@ int bsdiff_handler(struct img_type *img,
 	pd.buf = (uint8_t *)malloc(img->size * sizeof(uint8_t));
 	pd.len = img->size;
 	pd.write_offset = 0;
-	pd.read_offset = 0;
+	pd.read_offset = 24;
 
 	ret = copyfile(img->fdin,
 				   &pd,
@@ -132,6 +132,7 @@ int bsdiff_handler(struct img_type *img,
 		// FIXME - how to handle this
 	}
 	dst_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
+       // FIXME - Read the newsize from the patchemything
 	ret = bspatch(src_data, chunk_size, dst_data, chunk_size, &bspatch_data);
 	if (ret) {
 		ERROR("Error %d applying bsdiff patch, aborting.", ret);
