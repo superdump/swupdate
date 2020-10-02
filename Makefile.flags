@@ -127,6 +127,11 @@ ifeq ($(CONFIG_LIBCONFIG),y)
 LDLIBS += config
 endif
 
+# zstd
+ifeq ($(CONFIG_BSDIFF),y)
+LDLIBS += zstd
+endif
+
 # libarchive
 ifeq ($(CONFIG_ARCHIVE),y)
 LDLIBS += archive

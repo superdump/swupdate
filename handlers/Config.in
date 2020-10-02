@@ -149,9 +149,14 @@ config EMBEDDED_LUA_HANDLER_SOURCE
 
 config BSDIFF
 	bool "bsdiff"
+	depends on HAVE_ZSTD
 	default n
 	help
-	  Handler to apply uncompresed bsdiff patches
+	  Handler using the zstd to decompress bsdiff patches
+	  and applying them.
+
+comment "bsdiff support needs zstd"
+	depends on !HAVE_ZSTD
 
 config ARCHIVE
 	bool "archive"
