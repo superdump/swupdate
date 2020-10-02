@@ -27,7 +27,7 @@
 
 #include "bspatch.h"
 
-static int64_t offtin(uint8_t *buf)
+int64_t offtin(uint8_t *buf)
 {
 	int64_t y;
 
