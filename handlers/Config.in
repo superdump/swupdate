@@ -147,6 +147,12 @@ config EMBEDDED_LUA_HANDLER_SOURCE
 	  Path to the Lua handler source code file to be
 	  embedded into the SWUpdate binary.
 
+config BSDIFF
+	bool "bsdiff"
+	default n
+	help
+	  Handler to apply uncompresed bsdiff patches
+
 config ARCHIVE
 	bool "archive"
 	depends on HAVE_LIBARCHIVE

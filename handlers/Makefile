@@ -7,7 +7,8 @@
 # not drop the handler if it is not called.
 # Handler can be called dynamically based
 # on the received image type.
-obj-y	+= dummy_handler.o bsdiff/bspatch.o bsdiff_handler.o
+obj-y	+= dummy_handler.o
+obj-$(CONFIG_BSDIFF) += bsdiff/bspatch.o bsdiff_handler.o
 obj-$(CONFIG_ARCHIVE) += archive_handler.o
 obj-$(CONFIG_BOOTLOADERHANDLER) += boot_handler.o
 obj-$(CONFIG_CFI)	+= flash_handler.o
