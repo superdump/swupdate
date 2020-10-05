@@ -9,7 +9,9 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <zstd.h>
+
+#include <archive.h>
+#include <archive_entry.h>
 
 #include "bsdiff/bspatch.h"
 #include "handler.h"
@@ -20,12 +22,18 @@ typedef struct patch_data_t {
 	uint8_t *patch_buf;
 	size_t patch_len;
 	size_t patch_offset;
-	ZSTD_DStream *zds;
-	size_t z_read_len;
+	struct archive *compressed;
 	uint8_t *raw_buf;
 	size_t raw_len;
 	size_t raw_offset;
 } patch_data_t;
+
+int patch_data_read_cb(void *out, const void *buf, unsigned int len);
+int bspatch_read_cb(const struct bspatch_stream *stream,
+					void *buffer, int length);
+int bsdiff_handler(struct img_type *img,
+		void __attribute__ ((__unused__)) *data);
+void bsdiff_handler_init(void);
 
 int patch_data_read_cb(void *out, const void *buf, unsigned int len)
 {
@@ -47,55 +55,25 @@ int bspatch_read_cb(const struct bspatch_stream *stream,
 					void *buffer, int length)
 {
 	patch_data_t *pd = (patch_data_t *)stream->opaque;
+
 	size_t bytes_requested = length;
 	size_t raw_avail = 0;
 	size_t bytes_to_read = 0;
-	size_t ret = 0;
-	ZSTD_inBuffer input = {};
-	ZSTD_outBuffer output = {};
+	ssize_t bytes_read = 0;
 
 	while (bytes_requested > 0) {
-		if (pd->raw_len - pd->raw_offset < 1) {
+		if (pd->raw_offset >= pd->raw_len) {
 			// decompress input block from patch buf at patch offset into raw buf at raw offset
-			if (pd->z_read_len > pd->patch_len - pd->patch_offset) {
-				ERROR("Tried to decompress more data than was available: %u > %u - %u = %u",
-					pd->z_read_len,
-					pd->patch_len,
-					pd->patch_offset,
-					pd->patch_len - pd->patch_offset);
-				return -1;
-			}
 			pd->raw_offset = 0;
 
-			input.src = pd->patch_buf + pd->patch_offset;
-			input.size = pd->z_read_len; // FIXME - should be patch_len - patch_offset?
-			input.pos = 0;
-			output.dst = pd->raw_buf;
-			output.size = pd->raw_len;
-			output.pos = 0;
-
-			ret = ZSTD_decompressStream(pd->zds, &output, &input);
-			if (ret < 0) {
-				ERROR("Failed to decompress patch data: %u", ret);
+			bytes_read = archive_read_data(pd->compressed, pd->raw_buf, pd->raw_len);
+			if (bytes_read < 0) {
+				ERROR("archive_read_data(): %s %d", archive_error_string(pd->compressed), bytes_read);
 				return -1;
-			} else if (ret > 0) {
-				// NOTE: This should never happen due to raw_buf being ZSTD_DStreamOutSize() large!
-				ERROR("Failed to decompress a complete block: %u", ret);
+			} else if (bytes_read == 0) {
+				// NOTE: This should never happen
+				ERROR("Patch is corrupt - tried to read more data than available");
 				return -1;
-			}
-
-			pd->patch_offset += input.pos;
-			if (output.pos == output.size) {
-				// Data left in internal buffers, calling again to flush
-				ret = ZSTD_decompressStream(pd->zds, &output, &input);
-				if (ret < 0) {
-					ERROR("Failed to decompress patch data: %u", ret);
-					return -1;
-				} else if (ret > 0) {
-					// NOTE: This shoulu never happen due to raw_buf being ZSTD_DStreamOutSize() large!
-					ERROR("Failed to decompress a complete block: %u", ret);
-					return -1;
-				}
 			}
 		}
 		// if length data is available in the uncompressed buffer, read it into buffer
@@ -121,11 +99,12 @@ int bsdiff_handler(struct img_type *img,
 	FILE *dst_file = NULL;
 	uint8_t *src_data = NULL;
 	uint8_t *dst_data = NULL;
-	patch_data_t pd = { NULL, 0, 0, NULL, 0, NULL, 0, 0 };
-	size_t patch_size = 0;
+	patch_data_t pd = { NULL, 0, 0, NULL, NULL, 0, 0 };
+	size_t patched_size = 0;
 	struct bspatch_stream bspatch_data = {};
 	size_t bytes_read = 0;
 	size_t bytes_written = 0;
+	struct archive_entry *entry;
 
 	// Parse the sw-description fields
 
@@ -192,29 +171,47 @@ int bsdiff_handler(struct img_type *img,
 	// Check bsdiff magic
 	if (pd.patch_len < 24) {
 		ERROR("Corrupt patch: patch is too small: %u", pd.patch_len);
+		ret = -1;
 		goto cleanup;
 	}
 	if (memcmp(pd.patch_buf, "ENDSLEY/BSDIFF43", 16) != 0) {
 		ERROR("Corrupt patch: patch magic does not match");
+		ret = -1;
 		goto cleanup;
 	}
-	patch_size = offtin(pd.patch_buf + 16);
-	if (patch_size < 0) {
-		ERROR("Corrupt patch: patch size invalid: %d", patch_size);
+	patched_size = offtin(pd.patch_buf + 16);
+	if (patched_size < 0) {
+		ERROR("Corrupt patch: patch size invalid: %d", patched_size);
+		ret = -1;
 		goto cleanup;
 	}
 	pd.patch_offset = 24;
 
-	// Initialize ZSTD
-	pd.zds = ZSTD_createDStream();
-	pd.z_read_len = ZSTD_initDStream(pd.zds);
-	pd.raw_len = ZSTD_DStreamOutSize();
-	pd.raw_buf = (uint8_t *)malloc(pd.raw_len);
-	if (!pd.raw_buf) {
-		ERROR("Failed to allocate decompression buffer.");
+	// Initialize libarchive
+	pd.compressed = archive_read_new();
+	archive_read_support_filter_all(pd.compressed);
+	archive_read_support_format_raw(pd.compressed);
+	ret = archive_read_open_memory(pd.compressed, pd.patch_buf + pd.patch_offset, pd.patch_len - pd.patch_offset);
+	if (ret) {
+		ERROR("archive_read_open_memory(): %s %d", archive_error_string(pd.compressed), ret);
 		goto cleanup;
 	}
-	pd.raw_offset = 0;
+
+	// NOTE: Here we make an assumption that the patch only contains one entry!
+	ret = archive_read_next_header(pd.compressed, &entry);
+	if (ret == ARCHIVE_EOF) {
+		ERROR("Compressed part of patch was unable to decompress");
+		goto cleanup;
+	} else if (ret != ARCHIVE_OK) {
+		ERROR("archive_read_next_header(): %s %d", archive_error_string(pd.compressed), ret);
+		goto cleanup;
+	}
+
+	// Allocate 1MB buffer to decompress into
+	pd.raw_len = 1 << 20;
+	pd.raw_buf = (uint8_t *)malloc(pd.raw_len);
+	// Initialize raw_offset to raw_len to trigger decompression
+	pd.raw_offset = pd.raw_len;
 
 	bspatch_data.opaque = &pd;
 	bspatch_data.read = bspatch_read_cb;
@@ -223,28 +220,28 @@ int bsdiff_handler(struct img_type *img,
 	src_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
 	// FIXME - seek to offset point in input
 	bytes_read = fread(src_data, 1, chunk_size, src_file);
-
 	if (bytes_read != chunk_size) {
 		ERROR("Read fewer bytes %u than chunk_size %u", bytes_read, chunk_size);
-		// FIXME - how to handle this
+		ret = -1;
 		goto cleanup;
 	}
-	dst_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
+
+	dst_data = (uint8_t *)malloc(patched_size * sizeof(uint8_t));
 
 	// Apply the patch
 
-	ret = bspatch(src_data, chunk_size, dst_data, patch_size, &bspatch_data);
+	ret = bspatch(src_data, chunk_size, dst_data, patched_size, &bspatch_data);
 	if (ret) {
 		ERROR("Error %d applying bsdiff patch, aborting.", ret);
 		goto cleanup;
 	}
 
-	// seek to seek point in output
-	bytes_written = fwrite(dst_data, 1, chunk_size, dst_file);
+	// FIXME - seek to seek point in output
+	bytes_written = fwrite(dst_data, 1, patched_size, dst_file);
 
-	if (bytes_written != chunk_size) {
-		ERROR("Wrote fewer bytes %u than chunk_size %u", bytes_written, chunk_size);
-		// FIXME - how to handle this
+	if (bytes_written != patched_size) {
+		ERROR("Wrote fewer bytes %u than patched_size %u", bytes_written, patched_size);
+		ret = -1;
 		goto cleanup;
 	}
 
@@ -270,8 +267,9 @@ cleanup:
 	if (pd.patch_buf) {
 		free(pd.patch_buf);
 	}
-	if (pd.zds) {
-		ZSTD_freeDStream(pd.zds);
+	if (pd.compressed) {
+		archive_read_close(pd.compressed);
+		archive_read_free(pd.compressed);
 	}
 	if (pd.raw_buf) {
 		free(pd.raw_buf);

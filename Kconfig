@@ -25,10 +25,6 @@ config HAVE_LIBCONFIG
 	bool
 	option env="HAVE_LIBCONFIG"
 
-config HAVE_ZSTD
-	bool
-	option env="HAVE_ZSTD"
-
 config HAVE_LIBARCHIVE
 	bool
 	option env="HAVE_LIBARCHIVE"
