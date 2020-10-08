@@ -130,7 +130,7 @@ int bsdiff_handler(struct img_type *img,
 	// Open files
 
 	dst_file = NULL;
-	if ((dst_file = fopen(img->device, "wb+")) == NULL) {
+	if ((dst_file = fopen(img->device, "rb+")) == NULL) {
 		ERROR("%s cannot be opened for writing: %s", img->device, strerror(errno));
 		return -1;
 	}
