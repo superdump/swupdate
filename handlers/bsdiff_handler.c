@@ -93,7 +93,7 @@ int bsdiff_handler(struct img_type *img,
 {
 	int ret = 0;
 	char *src_filename = NULL;
-	char *chunk_size_str = NULL;
+	char *temp_str = NULL;
 	size_t chunk_size = 0;
 	FILE *src_file = NULL;
 	FILE *dst_file = NULL;
@@ -105,6 +105,8 @@ int bsdiff_handler(struct img_type *img,
 	size_t bytes_read = 0;
 	size_t bytes_written = 0;
 	struct archive_entry *entry;
+	long int src_offset = 0;
+	long int dst_offset = 0;
 
 	// Parse the sw-description fields
 
@@ -119,11 +121,11 @@ int bsdiff_handler(struct img_type *img,
 		return -1;
 	}
 
-	chunk_size_str = dict_get_value(&img->properties, "chunk_size");
-	if (chunk_size_str == NULL) {
-		//
+	temp_str = dict_get_value(&img->properties, "chunk_size");
+	if (temp_str == NULL) {
+		// FIXME - default to the size of the source file? Warn if it is large?
 	}
-	chunk_size = strtoul(chunk_size_str, NULL, 10);
+	chunk_size = strtoul(temp_str, NULL, 10);
 
 	// Open files
 
@@ -174,18 +176,19 @@ int bsdiff_handler(struct img_type *img,
 		ret = -1;
 		goto cleanup;
 	}
-	if (memcmp(pd.patch_buf, "ENDSLEY/BSDIFF43", 16) != 0) {
+	if (memcmp(pd.patch_buf, "ENDSLEY/BSDIFF43", 16) == 0) {
+		patched_size = offtin(pd.patch_buf + 16);
+		pd.patch_offset = 24;
+	} else {
 		ERROR("Corrupt patch: patch magic does not match");
 		ret = -1;
 		goto cleanup;
 	}
-	patched_size = offtin(pd.patch_buf + 16);
 	if (patched_size < 0) {
 		ERROR("Corrupt patch: patch size invalid: %d", patched_size);
 		ret = -1;
 		goto cleanup;
 	}
-	pd.patch_offset = 24;
 
 	// Initialize libarchive
 	pd.compressed = archive_read_new();
@@ -218,7 +221,12 @@ int bsdiff_handler(struct img_type *img,
 
 	// Read source and destination data
 	src_data = (uint8_t *)malloc(chunk_size * sizeof(uint8_t));
-	// FIXME - seek to offset point in input
+	temp_str = dict_get_value(&img->properties, "src_offset");
+	if (temp_str != NULL) {
+		src_offset = strtol(temp_str, NULL, 10);
+		fseek(src_file, src_offset, SEEK_SET);
+		printf("Seeked to %ld (%ld) in the source\n", ftell(src_file), src_offset);
+	}
 	bytes_read = fread(src_data, 1, chunk_size, src_file);
 	if (bytes_read != chunk_size) {
 		ERROR("Read fewer bytes %u than chunk_size %u", bytes_read, chunk_size);
@@ -236,7 +244,12 @@ int bsdiff_handler(struct img_type *img,
 		goto cleanup;
 	}
 
-	// FIXME - seek to seek point in output
+	temp_str = dict_get_value(&img->properties, "dst_offset");
+	if (temp_str != NULL) {
+		dst_offset = strtol(temp_str, NULL, 10);
+		fseek(dst_file, dst_offset, SEEK_SET);
+		printf("Seeked to %ld (%ld) in the destination\n", ftell(dst_file), dst_offset);
+	}
 	bytes_written = fwrite(dst_data, 1, patched_size, dst_file);
 
 	if (bytes_written != patched_size) {
